@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+~$*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.env
+
+# JMeter outputs
+*.jtl
+output*/
+
+# Node
+node_modules/
+
+# Proyectos de P3 que no se necesitan en P4
+si2_alumnos-main/P0/
+si2_alumnos-main/P1-rpc-backend/
+si2_alumnos-main/P1-rpc-frontend/
+si2_alumnos-main/P1-ws-backend/
+si2_alumnos-main/P1-ws-frontend/
