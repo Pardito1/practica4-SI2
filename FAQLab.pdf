@@ -1,0 +1,65 @@
+Configuración del Entorno de Prácticas
+Peculiaridades de los ordenadores  de la EPS
+
+1) El puerto 8000 no está disponible
+Por defecto los servidores de Django usan el puerto 8000. Este está en uso en los ordenadores de los laboratorios por lo que deberéis usar algún otro puerto que este disponible como el 8001. De esta forma en lugar de ejecutar el comando
+
+python manage.py runserver
+ usad
+python manage.py runserver 8001
+ 
+IMPORTANTE: esta restricción NO afecta a las máquinas virtuales
+
+2) postgresl no está activo por defecto
+En los ordenadores de los laboratorios postgres no se ejecuta por defecto. Para lanzarlo deberéis teclear
+ 
+     sudo systemctl restart postgresql
+
+IMPORTANTE: esta restricción NO afecta a las máquinas virtuales
+
+3) Virtualbox 
+ 
+Es necesario ejecutar el comando:
+ 
+sudo modprobe -r kvm-intel 
+ 
+Se pedirá la contraseña del estudiante. Y arrancar virtualbox con sudo (ej: sudo virtualbox). 
+Github
+1) No puedo acceder a github usando ssh.
+
+Por defecto github usa ssh para realizar las conexiones. El router que gestiona las aulas de informatica está configurado para impedir que este tipo de conexiones se establezcan. Un remedio a esta situación consiste en cambiar el URI que apunta al repositorio de:
+    git@github.com:username/project.git
+       a
+
+    ssh://git@ssh.github.com:443/username/project.git
+de esta forma git usará el puerto 443 (HTTPS) para salir de las aulas
+IMPORTANTE: esta restricción NO afecta a las conexiones realizadas usando eduroam
+
+2) github requires a public ssh key (or a token)
+El siguiente mensaje  criptico significa que tienes que añadir la clave pública de SSH keys a github
+
+ERROR: Repository not found.
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists
+2) cuando se  realiza el pulling/merging de un repositorio aparece el mensaje de error
+    fatal: refusing to merge unrelated histories
+puedes forzar la acción con el comando
+    git pull origin main --allow-unrelated-histories
+ 
+
+NEON.TECH
+1) Cómo conectarse a neon.tech usando una versión antigua de psql.
+
+En lugar de
+
+psql 'postgres://username:password@ep-fancy-butterfly-606825.eu-central-1.aws.neon.tech/neondb'
+
+usa
+
+psql 'postgres://username:password@ep-fancy-butterfly-606825.eu-central-1.aws.neon.tech/neondb?options=project%3Dep-fancy-butterfly-606825&sslmode=require'
+
+IMPORTANTE: este problema NO aparece en los ordenadores de los laboratorios.
+
+ 
