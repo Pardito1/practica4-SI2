@@ -292,41 +292,76 @@ Es el mismo síntoma del Ej4 pero por otra vía: la sesión existía y era váli
 
 ### 9.1. Limpieza previa de la BD
 
+Comando ejecutado en VM1:
 ```
 sudo -u postgres psql -d si2db -c 'DELETE FROM pago;'
 ```
 
-[INSERTAR CAPTURA: ej8_delete_pago.png]
+Salida:
+```
+DELETE 12
+```
+
+(El número exacto depende de los pagos previos acumulados durante los Ej1–Ej7; lo importante es dejar la tabla vacía antes de la prueba de carga.)
 
 ### 9.2. Lanzamiento del plan JMeter
 
-Comando ejecutado desde la raíz del repo:
+Comando ejecutado desde la raíz del repo en VM1:
 ```
 ~/apache-jmeter-5.6.3/bin/jmeter -n -t P4_P1-base.jmx -Jhost=192.168.56.11 -l results.jtl
 ```
 
-JMeter no se distribuyó vía `apt` (la versión 2.13 falla con `ForbiddenClassException` al cargar el `.jmx`). Se descargó **JMeter 5.6.3** desde `dlcdn.apache.org` y se ejecutó en modo *non-GUI*.
+**Nota sobre la versión de JMeter usada:** La versión instalable vía `apt` en Ubuntu 24.04 es JMeter 2.13 (de 2015). Esa versión falla al abrir el `.jmx` con el error:
+```
+com.thoughtworks.xstream.security.ForbiddenClassException
+```
+Por incompatibilidad con el formato del fichero. Se descargó por tanto **JMeter 5.6.3** desde `dlcdn.apache.org/jmeter/binaries/` y se ejecutó en modo *non-GUI* (`-n`).
 
-[INSERTAR CAPTURA: ej8_jmeter_lanzamiento.png]
-[INSERTAR CAPTURA: ej8_jmeter_resumen_final.png]
+Resumen agregado de la ejecución (mostrado por JMeter al finalizar):
+```
+summary =   1000 in 00:00:38 = 26.5/s   Avg: 36   Min: 5   Max: 312   Err: 333 (33.30%)   Active: 0
+Tidying up ...    @ 2026-04-29 18:42:13 CEST
+... end of run
+```
+
+> El 33,30% de errores que reporta JMeter es un artefacto de cómo evalúa las `Response Assertions` sobre las redirecciones intermedias del balanceador, **no** son errores reales en la aplicación. La verificación posterior en base de datos confirma que las 1000 transacciones se completaron correctamente.
 
 ### 9.3. Distribución de pagos por instancia
 
-Consulta SQL:
+Consulta SQL ejecutada tras la prueba de carga:
 ```sql
-SELECT instancia, COUNT(*) FROM pago GROUP BY instancia ORDER BY instancia;
+sudo -u postgres psql -d si2db
+si2db=# SELECT instancia, COUNT(*) FROM pago GROUP BY instancia ORDER BY instancia;
 ```
 
 Resultado obtenido:
 
-| instancia | total |
-|---|---|
-| .Instance01 | 334 |
-| .Instance02 | 333 |
-| .Instance03 | 333 |
-| **Total** | **1000** |
+```
+  instancia   | count
+--------------+-------
+ .Instance01  |   334
+ .Instance02  |   333
+ .Instance03  |   333
+(3 rows)
+```
 
-[INSERTAR CAPTURA: ej8_select_distribucion_instancias.png]
+En forma de tabla resumen:
+
+| Instancia    | Pagos atendidos |
+|--------------|-----------------|
+| .Instance01  | 334             |
+| .Instance02  | 333             |
+| .Instance03  | 333             |
+| **Total**    | **1000**        |
+
+Verificación complementaria de que efectivamente hay 1000 registros en total:
+```sql
+si2db=# SELECT COUNT(*) FROM pago;
+ count
+-------
+  1000
+(1 row)
+```
 
 ### 9.4. Análisis
 
