@@ -1,0 +1,93 @@
+EJERCICIO 1 - Cluster sin sticky session: pago falla por sesion perdida
+========================================================================
+
+Examen Practicas SI2 - Mayo 2026
+Grupo 2311 - Pareja 07
+Pablo Pollo Canelas / Alejandro Pardo
+
+
+PREGUNTA 1 - Justificacion del fallo
+------------------------------------
+El error "numero tarjeta no encontrado en la sesion" se produce porque la
+sesion en la que se guardo el numero de tarjeta no esta disponible para
+la instancia que recibe la peticion final del flujo de pago.
+
+Causas concretas:
+
+1. El balanceador esta configurado con StickySession=(None) (visible en
+   la captura del balancer-manager) y Method=byrequests. Esto significa
+   que cada peticion HTTP del cliente se distribuye en round-robin entre
+   las 3 instancias del cluster, sin afinidad alguna por cliente.
+
+2. La aplicacion P1-base esta configurada con
+       SESSION_ENGINE = "django.contrib.sessions.backends.cache"
+   que utiliza LocMemCache. LocMemCache es un cache en memoria local de
+   cada proceso Django, asi que NO se comparte entre las 3 instancias.
+
+3. El flujo de pago se compone de varias peticiones consecutivas:
+       GET  /visaApp/tarjeta/   (mostrar formulario tarjeta)
+       POST /visaApp/tarjeta/   (guardar numeroTarjeta en request.session
+                                 y redirigir)
+       GET  /visaApp/pago/      (leer numeroTarjeta de request.session)
+   Sin sticky session, esas peticiones caen en instancias distintas. La
+   instancia que guardo el numero de tarjeta en su LocMemCache no es la
+   misma que atiende la peticion siguiente, por lo que la nueva instancia
+   no encuentra la clave en sesion y muestra el error indicado.
+
+Esto se confirma observando la captura del balancer-manager "despues":
+las 3 instancias tienen Elected=1 cada una. Las peticiones del flujo se
+han repartido round-robin entre las tres.
+
+
+PREGUNTA 2 - Valor posible para la cookie ROUTEID
+--------------------------------------------------
+Respuesta correcta: d) Ninguno. No se envia ninguna cookie desde el
+balanceador.
+
+Justificacion: la cookie ROUTEID solo se inyecta cuando el balanceador
+tiene activada la afinidad de sesion (sticky session) y existe la
+directiva en la configuracion de Apache:
+
+    Header add Set-Cookie "ROUTEID=.%{BALANCER_WORKER_ROUTE}e; path=/" \
+        env=BALANCER_ROUTE_CHANGED
+
+Como en la captura aparece StickySession=(None), Apache no esta marcando
+ninguna afinidad de cliente y por tanto no anyade la cookie ROUTEID a la
+respuesta. Las opciones a, b y c (.Instance01/02/03) solo serian validas
+con sticky session activo y la directiva Header add Set-Cookie en el
+fichero de configuracion del balanceador.
+
+
+PREGUNTA 3 - Acciones para corregir el error
+---------------------------------------------
+1. Editar la configuracion del balanceador
+   (/etc/apache2/sites-available/000-default.conf) y anyadir las
+   directivas que activan la afinidad de sesion:
+
+       <Proxy "balancer://si2cluster">
+           BalancerMember http://192.168.1.101:18000 route=Instance01
+           BalancerMember http://192.168.1.101:28000 route=Instance02
+           BalancerMember http://192.168.1.101:38000 route=Instance03
+           ProxySet stickysession=ROUTEID
+       </Proxy>
+
+       Header add Set-Cookie "ROUTEID=.%{BALANCER_WORKER_ROUTE}e; path=/" \
+           env=BALANCER_ROUTE_CHANGED
+
+2. Validar la configuracion y recargar Apache:
+
+       sudo apachectl configtest
+       sudo systemctl reload apache2
+
+3. Borrar las cookies del navegador (para evitar arrastrar una ROUTEID
+   "fantasma" generada por pruebas anteriores).
+
+4. Repetir el flujo de pago. Ahora todas las peticiones del flujo iran a
+   la misma instancia (la que asigne la primera peticion del cliente),
+   la sesion se conservara en el LocMemCache de esa instancia y el pago
+   se registrara correctamente. La verificacion sera:
+
+   - En el navegador, mediante DevTools, aparecera la cookie ROUTEID con
+     valor .Instance0X.
+   - En el balancer-manager, solo una de las tres instancias incrementa
+     el contador Elected para ese cliente.

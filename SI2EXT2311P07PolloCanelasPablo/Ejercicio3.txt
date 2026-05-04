@@ -1,0 +1,136 @@
+EJERCICIO 3 - Anyadir campo "credito" al modelo Pago
+=====================================================
+
+Examen Practicas SI2 - Mayo 2026
+Grupo 2311 - Pareja 07
+Pablo Pollo Canelas / Alejandro Pardo
+
+
+RESUMEN
+-------
+Se ha copiado P1-base (entregada en la P1) al subdirectorio P1-base-ex.
+Se ha anyadido un campo booleano "credito" al modelo Pago. La aplicacion
+marca el pago como credito (True) cuando el titular de la tarjeta es
+"Clodoveo Martinez Dans" y como no credito (False) en cualquier otro
+caso. Las plantillas HTML correspondientes muestran el nuevo campo al
+registrar un pago y al listarlo desde testbd.
+
+El despliegue de prueba se ha realizado en una unica MV (MV1) con la
+base de datos PostgreSQL local; no se ha utilizado el cluster.
+
+
+CAMBIOS REALIZADOS EN P1-base-ex
+--------------------------------
+
+1. visaApp/models.py - Anyadir campo credito al modelo Pago
+
+   class Pago(models.Model):
+       idComercio = models.CharField(max_length=16)
+       idTransaccion = models.CharField(max_length=16)
+       importe = models.FloatField()
+       tarjeta = models.ForeignKey(Tarjeta, on_delete=models.CASCADE)
+       marcaTiempo = models.DateTimeField(auto_now=True)
+       codigoRespuesta = models.CharField(max_length=3,
+                                          default=CodigoRespuesta.RESPUESTA_OK)
+       credito = models.BooleanField(default=False)   # NUEVO
+
+       class Meta:
+           constraints = [UniqueConstraint(fields=['idTransaccion',
+                                                   'idComercio'],
+                                           name='unique_blocking_pago')]
+           db_table = 'pago'
+
+2. visaApp/views.py - Calcular credito a partir del nombre del titular
+
+   Se importa el modelo Tarjeta y se define una constante con el nombre
+   que activa el credito:
+
+       from visaApp.models import Tarjeta
+       NOMBRE_CREDITO = 'Clodoveo Martinez Dans'
+
+   En la vista aportarinfo_pago (flujo normal: tarjeta -> pago) se
+   recupera el numero de tarjeta de la sesion, se obtiene el objeto
+   Tarjeta correspondiente y se compara su nombre con NOMBRE_CREDITO:
+
+       try:
+           tarjeta_obj = Tarjeta.objects.get(numero=numero)
+           pago_data['credito'] = (tarjeta_obj.nombre == NOMBRE_CREDITO)
+       except Tarjeta.DoesNotExist:
+           pago_data['credito'] = False
+
+   En la vista testbd (flujo directo de prueba: ambos formularios en la
+   misma pantalla) se usa el nombre directamente del formulario, ya que
+   esta disponible:
+
+       data['credito'] = (
+           tarjeta_form.cleaned_data['nombre'] == NOMBRE_CREDITO)
+
+3. visaApp/templates/template_exito.html - Mostrar el nuevo campo
+
+   Se anyade una linea para mostrar el campo credito en la pagina de
+   exito del registro de pago:
+
+       <p> Crédito: {{ pago.credito }}
+
+4. visaApp/templates/template_get_pagos_result.html - Nueva columna
+
+   Se anyade la columna "Credito" tanto en la cabecera de la tabla como
+   en cada fila del listado de pagos:
+
+       <td>Crédito</td>
+       ...
+       <td> {{pago.credito}} </td>
+
+5. visaApp/migrations/0002_pago_credito.py - Migracion generada
+
+   Se ha generado la migracion 0002_pago_credito tras ejecutar:
+
+       python manage.py makemigrations visaApp
+       python manage.py migrate
+
+   La migracion anyade el campo credito (BooleanField, default=False) a
+   la tabla pago.
+
+
+PROCEDIMIENTO DE PRUEBA
+-----------------------
+La aplicacion P1-base-ex se ha desplegado en MV1 con runserver
+escuchando en 0.0.0.0:8000 (puerto 18000 desde el host por
+port-forwarding de VirtualBox).
+
+Se han registrado 5 pagos a traves del formulario de testbd
+(http://localhost:18000/visaApp/testbd/) con tarjetas de distintos
+titulares para cubrir los casos posibles:
+
+  Pago 1: Clodoveo Martinez Dans   -> esperado credito = True
+  Pago 2: Clodoveo Martinez Dans   -> esperado credito = True
+  Pago 3: Gabriel Vallejo Cozar    -> esperado credito = False
+  Pago 4: Petra Martinez Dans      -> esperado credito = False
+                                      (Martinez Dans pero NO Clodoveo)
+  Pago 5: Clodoveo San Poza        -> esperado credito = False
+                                      (Clodoveo pero NO Martinez Dans)
+
+Los casos 4 y 5 demuestran que la comparacion es por igualdad exacta
+del nombre completo: ni un Clodoveo distinto, ni un Martinez Dans
+distinto, activan el credito.
+
+
+RESULTADO DE LA SENTENCIA SQL
+-----------------------------
+si2db=# SELECT * FROM pago ORDER BY id;
+
+ id | idComercio | idTransaccion | importe |          marcaTiempo          | codigoRespuesta |     tarjeta_id      | credito
+----+------------+---------------+---------+-------------------------------+-----------------+---------------------+---------
+  6 | 001        | 1001          |     100 | 2026-05-04 12:53:32.802970+02 | 000             | 4815 2103 2353 1162 | t
+  7 | 001        | 1002          |     250 | 2026-05-04 12:58:14.484618+02 | 000             | 4815 2103 2353 1162 | t
+  8 | 001        | 1003          |      75 | 2026-05-04 12:59:45.373890+02 | 000             | 3974 8228 3584 7557 | f
+  9 | 002        | 2001          |      30 | 2026-05-04 13:00:59.899645+02 | 000             | 1022 9819 5395 9208 | f
+ 10 | 002        | 2002          |      45 | 2026-05-04 13:01:55.835354+02 | 000             | 1282 0772 3884 8468 | f
+(5 rows)
+
+La columna credito muestra:
+  - 't' (True)  para los pagos 6 y 7 (titular: Clodoveo Martinez Dans,
+                                       tarjeta 4815 2103 2353 1162)
+  - 'f' (False) para los pagos 8, 9 y 10 (otros titulares)
+
+El comportamiento esperado se cumple en todos los casos.

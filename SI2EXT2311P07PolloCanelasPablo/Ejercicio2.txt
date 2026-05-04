@@ -1,0 +1,76 @@
+EJERCICIO 2 - JMeter y configuracion de la BD remota
+=====================================================
+
+Examen Practicas SI2 - Mayo 2026
+Grupo 2311 - Pareja 07
+Pablo Pollo Canelas / Alejandro Pardo
+
+
+PREGUNTA 2.1 - Pagos esperados en la base de datos
+---------------------------------------------------
+Numero esperado de pagos = (Numero de hilos) x (Contador del bucle).
+El "Periodo de subida" (ramp-up) solo determina en cuanto tiempo se
+levantan los hilos al inicio del test, pero NO afecta al volumen total
+de peticiones realizadas.
+
+Por tanto:
+
+  a) 20 hilos x  5  loops =   100 pagos
+  b) 50 hilos x 10  loops =   500 pagos
+  c)  5 hilos x 1000 loops = 5000 pagos
+
+Observacion: este es el numero de POST que JMeter envia al servidor. El
+numero real de filas en la tabla pago puede ser inferior si los
+identificadores generados (idComercio, idTransaccion) no son unicos en
+cada iteracion, ya que la restriccion unique_blocking_pago
+(UniqueConstraint sobre idTransaccion + idComercio) rechaza duplicados.
+Asumiendo que el JMX usa Counter o Random correctamente configurados
+para generar IDs unicos en cada iteracion, los numeros indicados arriba
+se cumplen exactamente.
+
+
+PREGUNTA 2.2 - Error al registrar pago en MV2 con BD en MV1
+------------------------------------------------------------
+El contenido del fichero env de MV2 es:
+
+    DATABASE_SERVER_URL='postgres://alumnodb:alumnodb@localhost:15432/si2db'
+    DEBUG=True
+    SECRET_KEY = 'django-insecure-...'
+
+Causa del error
+---------------
+La cadena de conexion apunta a "localhost:15432". Como la aplicacion
+esta desplegada en MV2, el nombre "localhost" se resuelve a la propia
+MV2, no a MV1. Por tanto, Django intenta conectarse a un servidor
+PostgreSQL que no existe en MV2 (o que existe pero no contiene la base
+de datos si2db ni el usuario alumnodb), y falla la conexion. La base de
+datos real esta en MV1, por lo que la URL deberia apuntar a la IP de
+MV1 alcanzable desde MV2 a traves de la red interna.
+
+Solucion
+--------
+1. Editar el fichero env en MV2 sustituyendo "localhost" por la IP de
+   MV1 en la red interna del cluster (por ejemplo 192.168.56.11):
+
+       DATABASE_SERVER_URL='postgres://alumnodb:alumnodb@192.168.56.11:15432/si2db'
+
+2. En MV1 hay que permitir conexiones remotas a PostgreSQL:
+
+   - En postgresql.conf:
+         listen_addresses = '*'
+   - En pg_hba.conf, anyadir la regla:
+         host  si2db  alumnodb  192.168.56.0/24  md5
+   - Reiniciar el servicio de PostgreSQL en MV1:
+         sudo systemctl restart postgresql
+
+3. Validar la conectividad desde MV2 antes de relanzar la aplicacion:
+
+       psql -h 192.168.56.11 -p 15432 -U alumnodb -d si2db
+
+4. Reiniciar el servicio que sirve la aplicacion en MV2 (gunicorn,
+   runserver, etc.) para que recargue el fichero env modificado:
+
+       sudo systemctl restart gunicorn
+
+Tras estos cambios, el registro de pagos desde la aplicacion en MV2 se
+escribira correctamente sobre la base de datos de MV1.
