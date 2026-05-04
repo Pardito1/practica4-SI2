@@ -29,7 +29,6 @@ def aportarinfo_pago(request):
         pago_data = pago_form.cleaned_data
         # add numero to data
         pago_data['tarjeta_id'] = numero
-        # determinar si el pago es a credito segun el nombre del titular
         try:
             tarjeta_obj = Tarjeta.objects.get(numero=numero)
             pago_data['credito'] = (tarjeta_obj.nombre == NOMBRE_CREDITO)
@@ -91,7 +90,6 @@ def testbd(request):
 
         data = pago_form.cleaned_data
         data['tarjeta_id'] = tarjeta_form.cleaned_data['numero']
-        # determinar si el pago es a credito segun el nombre del titular
         data['credito'] = (
             tarjeta_form.cleaned_data['nombre'] == NOMBRE_CREDITO)
 
