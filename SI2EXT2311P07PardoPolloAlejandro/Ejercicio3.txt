@@ -1,152 +1,37 @@
-EJERCICIO 3 — Nuevo campo "credito" en P1-base
-==============================================
+EJERCICIO 3
+===========
 
-ENUNCIADO (resumen)
--------------------
-Copiar P1-base (de la P1) al subdirectorio P1-base-ex.
-Anyadir un campo nuevo "credito" (boolean) al modelo de Pago. La logica de
-negocio es: el pago se registra como a credito (credito=True) si y solo si el
-titular de la tarjeta utilizada es "Clodoveo Martinez Dans"; en caso contrario
-credito=False. Modificar las plantillas para mostrar el nuevo campo al registrar
-un pago y al listar pagos desde testbd. Probar con varios pagos y adjuntar el
-resultado de SELECT * FROM PAGO; en este fichero.
+He copiado P1-base a P1-base-ex y le he anyadido un campo "credito"
+(boolean, default False) al modelo Pago. La logica es: el pago es a
+credito si el titular de la tarjeta es "Clodoveo Martinez Dans", y no
+en cualquier otro caso.
 
+Ficheros tocados:
 
-ENTORNO DE EJECUCION
---------------------
-Aplicacion Django ejecutada en local (MV1) sobre el puerto 8000 (servidor de
-desarrollo Django, manage.py runserver). Base de datos PostgreSQL en la misma
-MV1 (alumnodb/alumnodb @ localhost:15432/si2db). Acceso desde el navegador del
-PC anfitrion mediante port-forward 18000 -> 8000.
+  - visaApp/models.py: anyadido el campo credito al modelo Pago.
 
+  - visaApp/views.py: en aportarinfo_pago se obtiene el nombre del
+    titular consultando la Tarjeta por el numero guardado en la sesion;
+    en testbd se coge directamente del formulario. En ambos casos:
 
-PASOS REALIZADOS
-----------------
-1. Copia del codigo P1-base limpio (de la entrega de la P1) a P1-base-ex:
-       cp -r SI2P1_2311_AlejandroPablo/SI2-P1-entrega/P1-base \
-             SI2EXT2311P07PardoPolloAlejandro/P1-base-ex
+        pago_data['credito'] = (titular == 'Clodoveo Martinez Dans')
 
-2. Modificacion de visaApp/models.py: anyadido el campo
-       credito = models.BooleanField(default=False)
-   en el modelo Pago.
+  - visaApp/templates/template_exito.html: anyadida la linea
+        <p> Credito: {{ pago.credito }}
 
-3. Modificacion de visaApp/views.py: importado el modelo Tarjeta y definida la
-   constante NOMBRE_CREDITO = 'Clodoveo Martinez Dans'. En las dos vistas que
-   registran un pago (aportarinfo_pago y testbd) se calcula el valor del nuevo
-   campo:
-     - aportarinfo_pago: el numero de tarjeta llega en sesion; se obtiene el
-       titular con Tarjeta.objects.get(numero=numero).nombre y se compara con
-       NOMBRE_CREDITO.
-     - testbd: el nombre del titular llega directamente en el formulario
-       (tarjeta_form.cleaned_data['nombre']) y se compara con NOMBRE_CREDITO.
+  - visaApp/templates/template_get_pagos_result.html: anyadida la
+    columna "Credito" en la tabla.
 
-4. Modificacion de las plantillas:
-     - template_exito.html: anyadida una linea "Credito: {{ pago.credito }}".
-     - template_get_pagos_result.html: anyadida la columna "Credito" tanto en
-       la cabecera como en el bucle de filas.
+  - visaApp/migrations/0002_pago_credito.py: migracion generada por
+    makemigrations que anyade la columna a la tabla pago.
 
-5. Migracion de la base de datos:
-       python manage.py makemigrations visaApp
-       python manage.py migrate
-   Resultado: se crea la migracion 0002_pago_credito que anyade la columna
-   credito a la tabla pago. (Nota: la tabla pago contenia una columna huerfana
-   "instancia" NOT NULL procedente de la P4. Como el modelo limpio de P1-base
-   no la incluye, se elimino con
-       ALTER TABLE pago DROP COLUMN instancia;
-   antes de las pruebas.)
-
-6. Pruebas desde testbd: se registraron 4 pagos en el navegador en la URL
-   http://localhost:18000/visaApp/testbd/, con dos tarjetas distintas.
+He registrado 4 pagos desde testbd:
+  - 2 con la tarjeta de Clodoveo Martinez Dans  -> credito = True
+  - 2 con tarjetas de otros titulares           -> credito = False
 
 
-CODIGO MODIFICADO (snippets clave)
-----------------------------------
-visaApp/models.py (clase Pago):
+Resultado de SELECT * FROM pago:
 
-    class Pago(models.Model):
-        idComercio = models.CharField(max_length=16)
-        idTransaccion = models.CharField(max_length=16)
-        importe = models.FloatField()
-        tarjeta = models.ForeignKey(Tarjeta, on_delete=models.CASCADE)
-        marcaTiempo = models.DateTimeField(auto_now=True)
-        codigoRespuesta = models.CharField(
-            max_length=3, default=CodigoRespuesta.RESPUESTA_OK)
-        credito = models.BooleanField(default=False)
-
-        class Meta:
-            constraints = [UniqueConstraint(
-                fields=['idTransaccion', 'idComercio'],
-                name='unique_blocking_pago')]
-            db_table = 'pago'
-
-
-visaApp/views.py (fragmentos relevantes):
-
-    from visaApp.models import Tarjeta
-
-    NOMBRE_CREDITO = 'Clodoveo Martinez Dans'
-
-    # En aportarinfo_pago (flujo tarjeta -> pago):
-    pago_data = pago_form.cleaned_data
-    pago_data['tarjeta_id'] = numero
-    try:
-        titular = Tarjeta.objects.get(numero=numero).nombre
-    except Tarjeta.DoesNotExist:
-        titular = ''
-    pago_data['credito'] = (titular == NOMBRE_CREDITO)
-    pago = registrar_pago(pago_data)
-
-    # En testbd (formulario unico tarjeta + pago):
-    data = pago_form.cleaned_data
-    data['tarjeta_id'] = tarjeta_form.cleaned_data['numero']
-    data['credito'] = (tarjeta_form.cleaned_data['nombre'] == NOMBRE_CREDITO)
-    pago = registrar_pago(data)
-
-
-visaApp/templates/template_exito.html (linea anyadida):
-    <p> Credito: {{ pago.credito }}
-
-
-visaApp/templates/template_get_pagos_result.html
-    Cabecera: anyadida <td>Credito</td>
-    Cuerpo:   anyadida <td> {{pago.credito}} </td>
-
-
-visaApp/migrations/0002_pago_credito.py (autogenerado):
-    operations = [
-        migrations.AddField(
-            model_name='pago',
-            name='credito',
-            field=models.BooleanField(default=False),
-        ),
-    ]
-
-
-PRUEBAS REALIZADAS
-------------------
-Se registraron 4 pagos en testbd combinando dos tarjetas con titular Clodoveo
-Martinez Dans (debe dar credito=True) y dos tarjetas con titular distinto
-(debe dar credito=False):
-
-  Pago 1: tarjeta 4815 2103 2353 1162 (Clodoveo Martinez Dans)
-          idComercio COM07, idTransaccion TRX001, importe 100  -> credito True
-
-  Pago 2: tarjeta 4815 2103 2353 1162 (Clodoveo Martinez Dans)
-          idComercio COM07, idTransaccion TRX002, importe 250  -> credito True
-
-  Pago 3: tarjeta 3974 8228 3584 7557 (Gabriel Vallejo Cozar)
-          idComercio COM07, idTransaccion TRX003, importe 50   -> credito False
-
-  Pago 4: tarjeta 8358 7517 5756 8128 (Blas Gonzalez Punset)
-          idComercio COM07, idTransaccion TRX004, importe 75   -> credito False
-
-La pantalla de exito (template_exito.html) muestra correctamente el campo
-"Credito: True" o "Credito: False" segun el titular. Los cuatro pagos se
-registran en la base de datos sin error.
-
-
-RESULTADO DE SELECT * FROM PAGO;
---------------------------------
 si2db=# SELECT * FROM pago ORDER BY id;
  id | idComercio | idTransaccion | importe |          marcaTiempo          | codigoRespuesta |     tarjeta_id      | credito
 ----+------------+---------------+---------+-------------------------------+-----------------+---------------------+---------
@@ -156,7 +41,7 @@ si2db=# SELECT * FROM pago ORDER BY id;
  10 | COM07      | TRX003        |      50 | 2026-05-04 13:02:57.807025+02 | 000             | 3974 8228 3584 7557 | f
 (4 rows)
 
-Las dos primeras filas (tarjetas a nombre de Clodoveo Martinez Dans) tienen
-credito = t (True) y las dos ultimas (tarjetas con otros titulares) tienen
-credito = f (False), confirmando que la logica de negocio funciona como pide
-el enunciado.
+Las dos primeras filas corresponden a la tarjeta de Clodoveo Martinez Dans
+y salen con credito = t. Las dos ultimas son de Blas Gonzalez Punset y
+Gabriel Vallejo Cozar, que salen con credito = f. Funciona como pide el
+enunciado.

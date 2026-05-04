@@ -1,147 +1,60 @@
-EJERCICIO 1 — Cluster con 3 instancias: pago no se registra
-===========================================================
+EJERCICIO 1
+===========
 
-ENUNCIADO (resumen)
--------------------
-La aplicacion P1-base se ha desplegado en un cluster con tres instancias
-balanceadas por Apache. El cliente accede al endpoint de tarjeta a traves del
-balanceador; rellena los datos de la tarjeta y pulsa Enviar; despues rellena
-el formulario de pago y pulsa Enviar. En lugar de la pantalla de exito,
-aparece el mensaje:
+1) Por que falla el pago
 
-    "¡Error: numero tarjeta no encontrado en la sesion!"
+El balanceador no tiene activada la afinidad de sesion (en las dos capturas
+del balancer-manager pone StickySession = (None) y el metodo es byrequests).
+Esto se ve tambien en la segunda captura: cada una de las tres instancias
+tiene Elected = 1, lo que significa que las peticiones del flujo (entrar a
+tarjeta, enviar tarjeta, pedir el formulario de pago, enviar el pago) se han
+repartido en round-robin entre las tres.
 
-Las dos capturas del balancer-manager (ANTES y DESPUES de pulsar enviar)
-comparten dos datos relevantes:
-  - StickySession = (None)
-  - Method = byrequests
-y ademas en la captura DESPUES los contadores Elected, Busy, To y From han
-crecido en CADA UNA de las tres instancias (Elected = 1 en las tres,
-To = 1.7K, From = 1.1K).
+P1-base guarda el numero de tarjeta validado en la sesion de Django, y la
+sesion esta configurada en memoria local de cada instancia (LocMemCache),
+asi que no se comparte entre ellas. Cuando el POST del pago cae en una
+instancia distinta a la que valido la tarjeta, esa clave de sesion no
+existe alli y la vista responde con el mensaje "numero tarjeta no encontrado
+en la sesion".
 
-Se asume que la aplicacion P1-base esta correctamente desplegada y libre de
-errores, que la verificacion de CSRF esta deshabilitada, que los datos del
-formulario son correctos, y que la base de datos esta vacia.
-
-Hay que responder a tres preguntas: (1) justificar el motivo del fallo,
-(2) que valor podria tomar la cookie ROUTEID en el navegador, y (3) que
-acciones permiten corregir el error.
+El enunciado descarta las otras causas posibles (CSRF desactivado, datos
+correctos, BD vacia, app sin errores), asi que la causa es esa: falta de
+sticky session combinada con sesiones no compartidas.
 
 
-PREGUNTA 1 — Motivo del fallo
------------------------------
-La causa del fallo es que el balanceador NO esta aplicando afinidad de sesion
-(sticky session). En las dos capturas del balancer-manager se observa
-explicitamente "StickySession (None)" y un metodo de balanceo "byrequests"
-(round-robin por peticion). La consecuencia es que cada peticion HTTP del
-flujo del usuario se reparte entre las tres instancias del cluster con
-independencia de las anteriores.
+2) Valor de la cookie ROUTEID
 
-Esto se confirma en la captura del estado DESPUES del fallo: las tres
-instancias (Instance01, Instance02 e Instance03) tienen exactamente Elected = 1
-y aproximadamente las mismas cifras de To y From. Es decir, las peticiones
-necesarias para completar el flujo (GET tarjeta, POST tarjeta, GET pago,
-POST pago) han caido cada una en una instancia distinta.
+La respuesta correcta es la (d): ninguno.
 
-El flujo de pago de P1-base depende de la sesion HTTP de Django: cuando el
-usuario envia el formulario de tarjeta, la vista aportarinfo_tarjeta
-guarda el numero de tarjeta validado en la sesion del lado del servidor
-(request.session['numeroTarjeta']). Mas tarde, cuando llega el POST del
-formulario de pago a la vista aportarinfo_pago, esa vista LEE esa misma
-clave de la sesion para asociar el pago a la tarjeta verificada.
-
-Como la aplicacion esta configurada con SESSION_ENGINE basado en
-LocMemCache (cache local de cada proceso Django), las sesiones NO se
-comparten entre las tres instancias del cluster: cada instancia tiene su
-propia memoria local. Si la peticion que valido la tarjeta cae en
-Instance01 pero el POST del pago cae en Instance02 o Instance03, la clave
-'numeroTarjeta' no existe en la sesion local de la instancia que recibe el
-POST, y la vista entra en la rama:
-
-    return render(..., {'mensaje':
-        '¡Error: numero tarjeta no encontrado en la sesion!'})
-
-que es exactamente el mensaje observado.
-
-El enunciado descarta otras causas tipicas: la app esta libre de errores
-(no es un bug del codigo), la BD esta vacia (no es un duplicado por
-unique_blocking_pago), CSRF esta desactivado (no es un fallo de token), y
-los datos del formulario son correctos. Por descarte y por la evidencia del
-balancer-manager, la causa raiz es la falta de afinidad de sesion (sticky)
-combinada con almacenamiento de sesion local en memoria de cada instancia.
+Si el sticky esta desactivado, Apache no inyecta la cookie ROUTEID. Por eso
+el navegador no recibe ningun Set-Cookie con ese nombre y la cookie
+sencillamente no existe. Las opciones a, b y c (con sufijos .Instance01,
+.Instance02 o .Instance03) solo serian validas si el balanceador estuviera
+configurado para anyadir la afinidad, que es justo lo que aqui no esta
+ocurriendo.
 
 
-PREGUNTA 2 — Posibles valores de la cookie ROUTEID
---------------------------------------------------
-La respuesta correcta es la opcion (d) Ninguno. No se envia la cookie
-ROUTEID desde el balanceador.
+3) Como se corrige
 
-Justificacion: ROUTEID es la cookie que mod_proxy_balancer de Apache utiliza
-para implementar la afinidad de sesion cuando se ha configurado la directiva
-ProxySet stickysession=ROUTEID y el correspondiente Header add Set-Cookie
-con la sustitucion %{BALANCER_WORKER_ROUTE}e. En la configuracion del
-escenario, el balancer-manager muestra explicitamente StickySession (None);
-por tanto Apache NO esta inyectando esa cookie en las respuestas hacia el
-cliente. Las opciones (a) .Instance01, (b) .Instance02 y (c) .Instance03
-solo serian valores posibles si la afinidad estuviera activa y el
-balanceador estuviera siendo configurado para anyadir el sufijo de ruta a
-la cookie. Al estar desactivada la afinidad, el navegador no recibe ninguna
-cabecera Set-Cookie: ROUTEID=... y por tanto la cookie no existe en el
-cliente, lo que coincide con la opcion (d).
+Hay que activar la afinidad de sesion en la configuracion del balanceador
+Apache (/etc/apache2/sites-available/000-default.conf):
 
+    Header add Set-Cookie "ROUTEID=.%{BALANCER_WORKER_ROUTE}e; path=/" \
+           env=BALANCER_ROUTE_CHANGED
 
-PREGUNTA 3 — Acciones para corregir el error
---------------------------------------------
-Para que el flujo de pago se complete correctamente sin tocar el
-SESSION_ENGINE de Django, basta con activar la afinidad de sesion en la
-configuracion del balanceador Apache. En el fichero
-/etc/apache2/sites-available/000-default.conf (sitio que define el balanceador)
-hay que:
+    <Proxy "balancer://si2cluster">
+        BalancerMember http://IP_VM1:18000 route=Instance01
+        BalancerMember http://IP_VM2:28000 route=Instance02
+        BalancerMember http://IP_VM3:38000 route=Instance03
+        ProxySet stickysession=ROUTEID
+        ProxySet lbmethod=byrequests
+    </Proxy>
 
-1) Anyadir la cabecera Set-Cookie con la ruta del worker que ha atendido la
-   peticion y la directiva ProxySet con stickysession=ROUTEID:
+Despues:
+    sudo apachectl configtest
+    sudo systemctl restart apache2
 
-       Header add Set-Cookie "ROUTEID=.%{BALANCER_WORKER_ROUTE}e; path=/" \
-              env=BALANCER_ROUTE_CHANGED
-
-       <Proxy "balancer://si2cluster">
-           BalancerMember http://IP_VM1:18000 route=Instance01
-           BalancerMember http://IP_VM2:28000 route=Instance02
-           BalancerMember http://IP_VM3:38000 route=Instance03
-           ProxySet stickysession=ROUTEID
-           ProxySet lbmethod=byrequests
-       </Proxy>
-
-   La directiva route=InstanceXX en cada BalancerMember debe coincidir con el
-   sufijo que se inyecta en la cookie a traves de %{BALANCER_WORKER_ROUTE}e.
-
-2) Asegurarse de que los modulos necesarios estan habilitados:
-
-       sudo a2enmod proxy proxy_http proxy_balancer lbmethod_byrequests headers
-
-3) Validar la configuracion y reiniciar Apache:
-
-       sudo apachectl configtest
-       sudo systemctl restart apache2
-
-4) En el navegador del cliente, borrar las cookies del dominio para empezar
-   con un estado limpio.
-
-5) Repetir el flujo de pago. Verificaciones esperadas:
-     - El navegador recibe ahora una cookie ROUTEID con valor del tipo
-       ".Instance01" (o .Instance02, .Instance03), confirmando que el
-       balanceador esta inyectando la afinidad.
-     - En el balancer-manager, al avanzar por el flujo (GET tarjeta -> POST
-       tarjeta -> GET pago -> POST pago), el contador Elected incrementa
-       solo en UNA de las tres instancias para el mismo cliente.
-     - El pago se registra correctamente y se muestra la pantalla de exito,
-       sin el mensaje "numero tarjeta no encontrado en la sesion".
-
-Como medida complementaria, si se quisiera que la aplicacion siguiera
-funcionando aunque el balanceador no inyectase sticky (o ante una caida de
-la instancia que tiene la sesion del usuario), seria recomendable cambiar
-el SESSION_ENGINE de Django a un backend compartido por las tres
-instancias, por ejemplo django.contrib.sessions.backends.db (sesiones en la
-base de datos PostgreSQL comun) o un cache compartido tipo Redis o
-Memcached. Pero, ajustandonos al enunciado, la accion minima necesaria es
-configurar la afinidad de sesion en Apache.
+Y en el navegador, borrar las cookies y reintentar el pago. Ahora el
+navegador deberia recibir una cookie ROUTEID con un valor del tipo
+.InstanceXX, y todas las peticiones del flujo iran a la misma instancia
+(en el balancer-manager se ve porque el contador Elected sube solo en una).

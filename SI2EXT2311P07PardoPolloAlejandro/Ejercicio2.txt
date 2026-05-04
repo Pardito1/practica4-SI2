@@ -1,127 +1,38 @@
-EJERCICIO 2 — Pruebas de rendimiento con JMeter y error de despliegue
-======================================================================
+EJERCICIO 2
+===========
 
-ENUNCIADO (resumen)
--------------------
-2.1) Se han preparado tres pruebas de rendimiento de la aplicacion P1-base con
-     JMeter, en tres grupos de hilos distintos con las siguientes
-     configuraciones:
+2.1) Pagos esperados en la BD
 
-       Config a:  Numero de hilos = 20  Periodo de subida = 10  Bucle = 5
-       Config b:  Numero de hilos = 50  Periodo de subida = 15  Bucle = 10
-       Config c:  Numero de hilos = 5   Periodo de subida = 3   Bucle = 1000
+Los pagos totales son hilos x iteraciones del bucle. El periodo de subida
+solo afecta al ritmo al que arrancan los hilos, no al numero total.
 
-     ¿Cuantos pagos se esperan ver en la base de datos despues de la ejecucion
-     de cada prueba a, b y c, y por que?
-
-2.2) La aplicacion P1-base se ha desplegado en la MV2; la base de datos
-     PostgreSQL esta en la MV1. Al registrar un pago se obtiene un error. El
-     contenido del fichero env de la aplicacion (en MV2) es:
-
-         DATABASE_SERVER_URL='postgres://alumnodb:alumnodb@localhost:15432/si2db'
-         DEBUG=True
-         SECRET_KEY = 'django-insecure-...'
-
-     Sabiendo que la aplicacion esta libre de errores y que la base de datos
-     no contiene pagos, indicar a que se debe el error y como solucionarlo.
+  a) 20 hilos x 5 iteraciones    =  100 pagos
+  b) 50 hilos x 10 iteraciones   =  500 pagos
+  c) 5 hilos x 1000 iteraciones  = 5000 pagos
 
 
-PREGUNTA 2.1 — Pagos esperados en la base de datos
---------------------------------------------------
-El numero total de pagos que un grupo de hilos genera durante una prueba de
-JMeter, asumiendo que cada iteracion de un hilo dispara exactamente UN
-registro de pago, viene dado por:
+2.2) Por que falla el registro del pago
 
-       pagos_totales = numero_de_hilos x contador_del_bucle
+El fichero env tiene la URL de la BD con "localhost":
 
-El "Periodo de subida" (ramp-up time) NO afecta al volumen total de peticiones
-generadas: solo controla la velocidad a la que JMeter pone en marcha los hilos
-(uno cada periodo_de_subida / numero_de_hilos segundos). Cuando todos los
-hilos estan activos, cada uno ejecuta su bucle completo con independencia del
-tiempo total. Por tanto:
+    DATABASE_SERVER_URL='postgres://alumnodb:alumnodb@localhost:15432/si2db'
 
-   Config a:  20 hilos x  5 iteraciones  =   100 pagos
-   Config b:  50 hilos x 10 iteraciones  =   500 pagos
-   Config c:   5 hilos x 1000 iteraciones = 5000 pagos
+Como la app esta en MV2, "localhost" desde MV2 es la propia MV2, no la MV1.
+PostgreSQL esta en MV1, asi que la conexion no llega a ningun sitio y por
+eso falla el pago.
 
-Estos valores son el numero de pagos que se DEBERIAN ver en la base de datos
-si todas las peticiones tienen exito y ningun pago se rechaza por
-restricciones de unicidad (UNIQUE (idTransaccion, idComercio) en la tabla
-pago) ni por errores de servidor. En condiciones reales puede haber menos
-filas si el JMX no incrementa de forma unica idTransaccion entre hilos o
-entre iteraciones (en cuyo caso PostgreSQL devolveria duplicate key). Pero,
-asumiendo que el plan de pruebas esta correctamente disenyado, los totales
-esperados son 100, 500 y 5000 respectivamente.
+Para arreglarlo, en el env de la MV2 hay que sustituir "localhost" por la
+IP de la MV1 (por ejemplo 192.168.1.101):
 
+    DATABASE_SERVER_URL='postgres://alumnodb:alumnodb@192.168.1.101:15432/si2db'
 
-PREGUNTA 2.2 — Error al registrar un pago en la BD
---------------------------------------------------
-Causa del error:
+Y en la MV1 hay que asegurarse de que PostgreSQL acepta conexiones desde
+fuera:
 
-El fichero env de la aplicacion en MV2 indica que la URL de conexion a la
-base de datos es
+  - En postgresql.conf:   listen_addresses = '*'
+  - En pg_hba.conf anyadir:
+        host  si2db  alumnodb  192.168.1.0/24  md5
+  - sudo systemctl restart postgresql
 
-       postgres://alumnodb:alumnodb@localhost:15432/si2db
-
-El nombre de host "localhost" siempre resuelve a la propia maquina donde se
-ejecuta el codigo, es decir, a la MV2 (no a la MV1). En la MV2 NO esta
-desplegada la base de datos: PostgreSQL esta corriendo en la MV1. Por tanto,
-cuando Django (corriendo en MV2) intenta conectarse a la base de datos para
-guardar el pago, el driver de PostgreSQL intenta abrir una conexion contra
-127.0.0.1:15432 dentro de la MV2 y obtiene un error de conexion (typicamente
-"Connection refused" si en la MV2 no hay ningun proceso escuchando ese puerto,
-o "could not connect to server"). El registro del pago falla en consecuencia,
-aunque la aplicacion en si este libre de errores y la base de datos en la
-MV1 tampoco contenga datos previos.
-
-
-Como solucionarlo:
-
-1) En el fichero env de la MV2 hay que sustituir "localhost" por la
-   direccion IP (o nombre de host alcanzable) de la MV1. Por ejemplo, si la
-   MV1 tiene la IP 192.168.1.101 en la red comun a las dos MVs:
-
-       DATABASE_SERVER_URL='postgres://alumnodb:alumnodb@192.168.1.101:15432/si2db'
-
-   y reiniciar el servidor de aplicacion (gunicorn / runserver) en MV2 para
-   que recargue la nueva variable de entorno.
-
-2) En la MV1, asegurarse de que PostgreSQL acepta conexiones remotas:
-
-   - En /etc/postgresql/<version>/main/postgresql.conf:
-         listen_addresses = '*'
-     (o al menos la IP de la MV1 visible para la MV2; por defecto solo
-     escucha en 127.0.0.1, lo que tambien explicaria el rechazo si MV2
-     intentara conectarse).
-
-   - En /etc/postgresql/<version>/main/pg_hba.conf, anyadir una linea que
-     autorice al usuario alumnodb a conectarse desde la red de la MV2 con
-     autenticacion por contrasenya, por ejemplo:
-
-         host    si2db   alumnodb   192.168.1.0/24    md5
-
-   - Reiniciar PostgreSQL:
-
-         sudo systemctl restart postgresql
-
-3) Verificar la conectividad desde la MV2 con un cliente psql, antes de
-   reintentar desde la aplicacion:
-
-       psql -h 192.168.1.101 -p 15432 -U alumnodb -d si2db
-
-   Si la conexion se establece y devuelve el prompt de psql, ya se puede
-   relanzar la aplicacion en MV2 y registrar el pago, que esta vez sera
-   correctamente almacenado en la base de datos de la MV1.
-
-4) Comprobaciones adicionales utiles:
-   - Que el firewall de la MV1 permite trafico entrante en el puerto 15432
-     (ufw / iptables segun el caso).
-   - Que ambas MVs estan en la misma red privada y se ven con ping.
-   - Que la base de datos si2db existe en la MV1 y que el usuario
-     alumnodb tiene permisos sobre ella.
-
-En resumen, el error se debe a que la URL de la base de datos apunta a
-"localhost" en lugar de a la maquina donde realmente reside PostgreSQL (la
-MV1). Sustituyendo "localhost" por la IP/hostname de la MV1 (y configurando
-PostgreSQL en MV1 para aceptar conexiones remotas del usuario alumnodb desde
-la red comun) el registro del pago se completara correctamente.
+Despues, desde MV2, basta con reiniciar la app y se podra registrar el
+pago contra la BD de MV1.
