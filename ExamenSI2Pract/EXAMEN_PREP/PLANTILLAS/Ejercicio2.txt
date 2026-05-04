@@ -1,0 +1,122 @@
+EJERCICIO 2 — Modificación del script JMeter P2.jmx
+====================================================
+
+ENUNCIADO RESUMIDO
+------------------
+[Resumen de las condiciones que pide:
+  - N usuarios x M iteraciones
+  - id incremental con offset y paso
+  - id fijo
+  - aleatorio de lista
+  - importe aleatorio en rango]
+
+
+CONFIGURACIÓN APLICADA AL JMX
+-----------------------------
+
+Thread Group:
+  - Number of Threads: [N]
+  - Ramp-up Period: [seg]
+  - Loop Count: [M]
+  - Total iteraciones esperadas: N x M = [TOTAL]
+
+HTTP Cookie Manager:
+  - Clear Cookies each Iteration: [✓ / X]   (justifica)
+
+[Si aplica] Counter "idMesa":
+  - Start: [valor inicial]
+  - Increment: [paso]
+  - Per User: false (compartido entre todos los hilos)
+  - Variable name: idMesa
+  → Uso en el body POST: ${idMesa}
+
+[Si aplica] CSV Data Set Config "Candidatos":
+  - Filename: candidatos.csv
+  - Variable Names: candidato
+  - Sharing Mode: All threads
+  → Uso en el body POST: ${candidato}
+  Contenido de candidatos.csv:
+    Pepe Pérez
+    Belén Ruiz
+    Juan López
+    Ana Gómez
+
+[Si aplica] Importe aleatorio:
+  - Función: ${__Random(150,500,importe)}
+  → Uso en el body POST: ${importe}
+
+[Si aplica] ID fijo (ej. proceso electoral):
+  - Valor literal "5" en el body POST.
+
+
+PASOS REALIZADOS PARA MODIFICAR EL JMX
+--------------------------------------
+1. Abrir el script P2.jmx original con JMeter (modo GUI):
+     ~/apache-jmeter-5.6.3/bin/jmeter -t P2.jmx
+2. En el Thread Group, ajustar Number of Threads a [N] y Loop Count a [M].
+3. Botón derecho sobre Thread Group > Add > Config Element > Counter.
+   Configurar como arriba.
+4. [Si CSV] Botón derecho > Add > Config Element > CSV Data Set Config.
+   Crear el fichero candidatos.csv en el mismo directorio que el JMX.
+5. En el HTTP Request del POST, sustituir los valores fijos por las variables
+   ${idMesa}, ${candidato}, ${importe}, etc.
+6. Guardar el JMX como P2.jmx (sobreescribiendo o el nombre que pida).
+
+
+COMPROBACIÓN DE LA MODIFICACIÓN
+-------------------------------
+Lanzamiento (modo headless):
+$ ~/apache-jmeter-5.6.3/bin/jmeter -n -t P2.jmx \
+      -Jhost=localhost -Jport=18000 -l results.jtl
+
+Salida resumen (output literal de JMeter):
+[pega el "summary = N in HH:MM:SS = X/s ..." final]
+
+
+VERIFICACIÓN EN BD
+------------------
+Antes de la prueba:
+  $ sudo -u postgres psql -d si2db -c 'DELETE FROM pago;'   # o la tabla que toque
+  DELETE [N]
+
+Después de la prueba:
+  $ sudo -u postgres psql -d si2db -c 'SELECT COUNT(*) FROM pago;'
+   count
+  -------
+   [VALOR]
+  (1 row)
+
+¿Coincide con el esperado (N x M)?: [SÍ / NO]
+
+
+[SI EL EXAMEN PIDE 2.2 — investigar discrepancia]
+-------------------------------------------------
+Si el COUNT(*) es MENOR que el esperado pero JMeter reporta 0% de errores,
+las acciones a realizar dentro de JMeter son:
+
+1. Añadir un "View Results Tree" como listener al Test Plan, y lanzar 5-10
+   iteraciones en GUI. Inspeccionar la pestaña "Response data" de cada POST
+   para ver si la respuesta HTML es la de "pago/voto incorrecto" en lugar
+   de la de éxito (status HTTP 200 pero contenido de error).
+
+2. Añadir un "Response Assertion" sobre el POST de pago/voto, comprobando
+   que el body contiene "[texto de éxito esperado]". Eso convertiría los
+   200 silenciosos en errores explícitos en el resumen de JMeter.
+
+3. Añadir un "Aggregate Report" para comparar throughput vs filas en BD.
+
+4. Comprobar que el Counter está bien configurado (Per User: false) y que
+   no estamos enviando combinaciones (idComercio, idTransaccion) duplicadas
+   que el constraint UNIQUE de la BD rechaza.
+
+5. Comprobar la Cookie Manager: si "Clear Cookies each Iteration" está mal
+   marcado, todas las iteraciones de un mismo hilo van al mismo backend
+   (sticky session). En cluster, esto no es problema; en single VM, no
+   tiene efecto, pero si afecta al CSRF token sí.
+
+
+CONCLUSIÓN
+----------
+[1-2 líneas: el script modificado ejecuta correctamente las condiciones del
+enunciado y genera N x M registros en la base de datos, distribuidos según
+las reglas establecidas.]

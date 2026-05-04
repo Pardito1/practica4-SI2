@@ -1,0 +1,155 @@
+EJERCICIO 3 — [Sustituir por título corto: diagnóstico balancer / preguntas teóricas / ...]
+============================================================================================
+
+ENUNCIADO RESUMIDO
+------------------
+[Pega o resume las preguntas del enunciado]
+
+
+==========================================================================
+VARIANTE A — Si el ejercicio es DIAGNÓSTICO de balancer (typeof 22-23, 2024 mañana)
+==========================================================================
+
+Pregunta 1: justificar por qué falla un pago/voto pese a que todo está bien
+---------------------------------------------------------------------------
+Posibles causas en orden de probabilidad:
+
+1. **Sticky session NO configurada**: el balanceador reparte cada petición
+   independientemente entre las dos instancias del cluster. Como Django
+   almacena las sesiones en LocMemCache (memoria local del proceso, no
+   compartida entre instancias), cuando la petición POST del pago/voto
+   llega a una instancia distinta de la que validó la tarjeta, la
+   `numeroTarjeta` (o equivalente) no está en `request.session` de esa
+   instancia y la vista entra en la rama de error.
+
+2. **Discrepancia de estado entre instancias**: si las dos instancias
+   apuntan a BBDD distintas o a copias de BD desactualizadas, una conoce
+   datos que la otra no.
+
+3. **CSRF token caduco o no compartido**: el token CSRF se firma con la
+   SECRET_KEY de Django y la sesión. Si las instancias tienen distinta
+   SECRET_KEY o la sesión salta entre instancias, el token no valida en
+   la segunda → 403 (que internamente puede traducirse a "pago incorrecto").
+
+4. **Migraciones pendientes en una instancia**: si una instancia no ha
+   aplicado migraciones recientes y la otra sí, los inserts pueden fallar
+   por columnas faltantes.
+
+
+Pregunta 2: cookies posibles para JSESSIONID
+---------------------------------------------
+Valor a) `be1afff1f7615a6a33b70e584d42`           — sin sufijo de instancia
+Valor b) `be1afff1f7615a6a33b70e584d42.Instance01` — con sufijo
+
+Razonamiento:
+- Apache mod_jk (Tomcat) y mod_proxy_balancer (Apache nativo) añaden el
+  sufijo `.InstanceXX` a la cookie de sesión (JSESSIONID o ROUTEID
+  respectivamente) **SOLO cuando hay sticky session configurado** (con
+  `JvmRoute` o `route=` en cada BalancerMember).
+
+- Si la cookie llega SIN sufijo, indica que el balanceador NO está
+  configurado para sticky session, o que la cookie viene del propio
+  Tomcat/Django sin pasar por el balanceador.
+
+- Si la cookie llega CON sufijo, indica que el balanceador SÍ tiene sticky
+  session activo.
+
+Conclusión:
+- Bajo la configuración descrita en el enunciado (sticky session activo
+  según el balancer-manager), el valor **(b)** es el esperado/posible.
+- El valor **(a)** sería posible solo en escenarios degradados (sticky
+  desactivado o evitado).
+
+
+Pregunta 3: acciones para corregir el error de pago/voto incorrecto
+-------------------------------------------------------------------
+1. Configurar sticky session en Apache modificando el VirtualHost del
+   balanceador en `/etc/apache2/sites-available/000-default.conf`:
+
+   <Proxy "balancer://miCluster">
+       BalancerMember http://10.1.1.2:18000 route=Instance01
+       BalancerMember http://10.1.1.3:18000 route=Instance02
+       ProxySet stickysession=ROUTEID         # <-- añadir si falta
+       ProxySet lbmethod=byrequests
+   </Proxy>
+
+   Header add Set-Cookie "ROUTEID=.%{BALANCER_WORKER_ROUTE}e; path=/" \
+       env=BALANCER_ROUTE_CHANGED               # <-- añadir si falta
+
+2. Verificar la sintaxis y reiniciar Apache:
+     sudo apachectl configtest
+     sudo systemctl restart apache2
+
+3. Borrar las cookies del navegador (para regenerar la cookie ROUTEID
+   con el sufijo).
+
+4. Repetir el flujo de pago/voto. Confirmar que la cookie tiene formato
+   `XXX.Instance0Y` y que el pago se completa.
+
+5. Verificar en balancer-manager (`http://<IP>/balancer-manager`) que
+   los Elected counters incrementan SOLO en una instancia para el mismo
+   cliente.
+
+
+==========================================================================
+VARIANTE B — Si el ejercicio es PREGUNTAS TEÓRICAS (typeof 2024 tarde)
+==========================================================================
+
+a) Comando ssh-keygen para que DAS conecte sin password a los nodos
+-------------------------------------------------------------------
+En la VM del DAS (si2srv01):
+
+  ssh-keygen -t rsa -b 4096            # generar par de claves (si no existe)
+                                        # Acepta defaults, deja passphrase vacío.
+  ssh-copy-id si2@si2srv02
+  ssh-copy-id si2@si2srv03
+
+Esto copia la **clave pública** del DAS a `~/.ssh/authorized_keys` de
+cada nodo. Tras esto, `ssh si2@si2srv02` desde si2srv01 entra sin
+preguntar password.
+
+Si ssh-copy-id no está disponible, equivalente manual:
+  cat ~/.ssh/id_rsa.pub | ssh si2@si2srv02 \
+      'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+
+
+b) ¿Para qué sirve si2fixMAC.sh?
+--------------------------------
+Es un script que regenera (asigna nuevas) las direcciones MAC de las
+interfaces de red de las VMs en VirtualBox. Es necesario porque cuando
+se clona una VM, VirtualBox conserva la MAC original; al arrancar dos
+clones simultáneamente en la misma red interna se produce un conflicto
+de MAC duplicada (capa 2) que rompe la conectividad entre ellas.
+
+`si2fixMAC.sh` automatiza el cambio de MAC a un valor único por VM.
+Se ejecuta antes de arrancar el cluster.
+
+
+c) ¿Para qué sirve virtualip.sh? ¿En qué se diferencia de si2fixMAC.sh?
+-----------------------------------------------------------------------
+`virtualip.sh` configura una **IP virtual flotante** sobre una de las
+interfaces de las VMs del cluster. La IP virtual actúa como punto de
+entrada único al cluster (típicamente la IP del DAS o del balanceador)
+y puede migrar entre máquinas físicas si la activa cae, dando alta
+disponibilidad (HA).
+
+Diferencia con `si2fixMAC.sh`:
+- `si2fixMAC.sh` opera a nivel **MAC (capa 2 del modelo OSI)**:
+  asigna identidades únicas a las interfaces de red para evitar
+  colisiones físicas entre VMs clonadas.
+- `virtualip.sh` opera a nivel **IP (capa 3 del modelo OSI)**:
+  introduce una IP de servicio compartida que el cluster expone al
+  exterior, distinta de las IPs físicas de cada nodo.
+
+Son complementarios, no sustitutivos: primero garantizas la unicidad
+de las MAC (si2fixMAC.sh) y luego defines un punto de entrada lógico
+unificado (virtualip.sh).
+
+
+==========================================================================
+
+CONCLUSIÓN
+----------
+[1-2 líneas finales: por ejemplo "Tras aplicar la corrección, el cluster
+sirve correctamente los pagos respetando la afinidad sticky session, y
+las cookies del navegador llevan el sufijo .InstanceXX como estaba previsto."]
