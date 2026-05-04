@@ -1,30 +1,28 @@
 RESUMEN
 
-He copiado P1-base al subdirectorio P1-base-ex y le he anyadido el campo
-"credito" (BooleanField) al modelo Pago. El pago se marca como credito
-(True) cuando el titular de la tarjeta es exactamente "Clodoveo Martinez
-Dans" y como no credito (False) en cualquier otro caso. Las plantillas
-muestran el nuevo campo al registrar el pago y al listar pagos desde
-testbd.
+He copiado P1-base a P1-base-ex y le he anyadido un campo credito
+(boolean) al modelo Pago. El pago sale como credito (True) cuando el
+nombre de la tarjeta es "Clodoveo Martinez Dans" y como no credito
+(False) en cualquier otro caso. Las plantillas muestran el campo al
+registrar y al listar.
 
-He probado todo en una sola MV (MV1) con la BD local; no he usado el
-cluster.
+La he probado en MV1 sola, con la BD local, sin cluster.
 
 
-CAMBIOS REALIZADOS
+CAMBIOS
 
-1. visaApp/models.py - Anyadido el campo credito al modelo Pago:
+1. visaApp/models.py - anyadido al modelo Pago:
 
        credito = models.BooleanField(default=False)
 
-2. visaApp/views.py - He importado Tarjeta y definido la constante con
-   el nombre del titular que activa el credito:
+2. visaApp/views.py - he importado Tarjeta y puesto la constante con el
+   nombre que activa el credito:
 
        from visaApp.models import Tarjeta
        NOMBRE_CREDITO = 'Clodoveo Martinez Dans'
 
-   En aportarinfo_pago (flujo normal: tarjeta -> pago), tras leer
-   numeroTarjeta de la sesion, busco la Tarjeta y comparo el nombre:
+   En aportarinfo_pago, despues de sacar el numero de la sesion, busco
+   la tarjeta y comparo el nombre:
 
        try:
            tarjeta_obj = Tarjeta.objects.get(numero=numero)
@@ -32,42 +30,35 @@ CAMBIOS REALIZADOS
        except Tarjeta.DoesNotExist:
            pago_data['credito'] = False
 
-   En testbd, el nombre viene directamente del formulario:
+   En testbd el nombre lo tengo directamente en el formulario:
 
        data['credito'] = (
            tarjeta_form.cleaned_data['nombre'] == NOMBRE_CREDITO)
 
-3. template_exito.html - Anyadida una linea para mostrar el campo:
+3. template_exito.html - una linea mas con el campo:
 
        <p> Crédito: {{ pago.credito }}
 
-4. template_get_pagos_result.html - Anyadida la columna "Crédito" en la
-   cabecera y en cada fila de la tabla del listado.
+4. template_get_pagos_result.html - columna "Crédito" en la cabecera y
+   en cada fila.
 
-5. visaApp/migrations/0002_pago_credito.py - Migracion generada con
-
-       python manage.py makemigrations visaApp
-       python manage.py migrate
-
-   Anyade la columna credito (boolean, default=False) a la tabla pago.
+5. La migracion la he generado con makemigrations + migrate. Crea el
+   fichero 0002_pago_credito.py que anyade la columna a la tabla.
 
 
 PRUEBAS
 
-He registrado 5 pagos via testbd con tarjetas de distintos titulares
-para cubrir todos los casos:
+He metido 5 pagos por testbd con varias tarjetas:
 
   Pago 1: Clodoveo Martinez Dans   -> credito = True
   Pago 2: Clodoveo Martinez Dans   -> credito = True (otra transaccion)
   Pago 3: Gabriel Vallejo Cozar    -> credito = False
   Pago 4: Petra Martinez Dans      -> credito = False
-                                      (Martinez Dans pero NO Clodoveo)
   Pago 5: Clodoveo San Poza        -> credito = False
-                                      (Clodoveo pero NO Martinez Dans)
 
-Los casos 4 y 5 son los mas relevantes: demuestran que la comparacion
-es por igualdad exacta del nombre completo. Ni un Clodoveo distinto, ni
-un "Martinez Dans" con otro nombre, activan el credito.
+Los pagos 4 y 5 los he metido a posta para comprobar que no basta con
+que parte del nombre coincida: tienen que ser exactamente "Clodoveo
+Martinez Dans" para que salga True.
 
 
 SELECT * FROM PAGO
@@ -83,8 +74,5 @@ si2db=# SELECT * FROM pago ORDER BY id;
  10 | 002        | 2002          |      45 | 2026-05-04 13:01:55.835354+02 | 000             | 1282 0772 3884 8468 | f
 (5 rows)
 
-La columna credito muestra:
-  - 't' (True) para los pagos 6 y 7 (titular Clodoveo Martinez Dans)
-  - 'f' (False) para los pagos 8, 9 y 10 (otros titulares)
-
-Funciona como se esperaba.
+Los pagos 6 y 7 (Clodoveo Martinez Dans) salen con credito=t y los
+otros tres con credito=f, justo lo que se esperaba.

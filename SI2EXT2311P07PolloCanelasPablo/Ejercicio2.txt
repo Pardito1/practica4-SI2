@@ -1,56 +1,41 @@
 PREGUNTA 2.1
 
-Numero de pagos que se esperan en la BD = (Numero de hilos) x (Contador
-del bucle). El periodo de subida (ramp-up) solo determina en cuanto
-tiempo se levantan los hilos al inicio, no afecta al volumen total de
-peticiones.
+Los pagos esperados son hilos x loops. El periodo de subida solo
+controla cuanto tarda en arrancar todos los hilos al principio, no
+cambia el total.
 
-a) 20 hilos x 5 loops    = 100 pagos
-b) 50 hilos x 10 loops   = 500 pagos
-c) 5 hilos x 1000 loops  = 5000 pagos
+a) 20 x 5    = 100
+b) 50 x 10   = 500
+c) 5 x 1000  = 5000
 
-Nota: este es el numero de POST que JMeter envia. El numero real de
-filas en la tabla pago puede ser menor si los identificadores generados
-(idComercio, idTransaccion) no son unicos en cada iteracion, ya que la
-restriccion unique_blocking_pago (UniqueConstraint sobre idTransaccion +
-idComercio) rechaza los duplicados. Asumiendo que el JMX usa Counter o
-Random correctamente configurados para generar IDs unicos, los numeros
-de arriba se cumplen.
+Si los IDs (idComercio + idTransaccion) se repiten en alguna iteracion,
+la unique constraint del modelo rechaza el duplicado y entonces saldria
+algun pago menos. Asumiendo que el JMX usa un Counter o un Random para
+generar IDs distintos, sale el numero exacto.
 
 
 PREGUNTA 2.2
 
-El env de la MV2 contiene:
-    DATABASE_SERVER_URL='postgres://alumnodb:alumnodb@localhost:15432/si2db'
-    DEBUG=True
-    SECRET_KEY = 'django-insecure-...'
+El problema esta en el env: la URL de la BD usa "localhost" y la app
+corre en MV2, asi que se intenta conectar al postgres de la propia MV2
+en vez de al de MV1. Como en MV2 no hay postgres (o no tiene la BD
+si2db), la conexion falla.
 
-Causa del error: la URL apunta a "localhost:15432". Como la aplicacion
-esta desplegada en MV2, "localhost" se resuelve a la propia MV2, no a
-MV1. Django intenta conectarse a un PostgreSQL que no existe en MV2 (o
-existe pero no contiene la BD si2db) y la conexion falla. La BD esta en
-MV1, asi que la URL deberia apuntar a la IP de MV1 alcanzable desde MV2
-por la red interna.
+Para arreglarlo:
 
-Solucion:
-
-1. Editar el env en MV2 sustituyendo localhost por la IP de MV1
-   (por ejemplo 192.168.56.11):
+1. En el env de MV2, cambiar localhost por la IP de MV1 en la red
+   interna, por ejemplo:
 
        DATABASE_SERVER_URL='postgres://alumnodb:alumnodb@192.168.56.11:15432/si2db'
 
-2. En MV1 hay que permitir conexiones remotas a PostgreSQL:
+2. Asegurar que el postgres de MV1 acepta conexiones externas:
    - postgresql.conf: listen_addresses = '*'
-   - pg_hba.conf, anyadir la regla:
+   - pg_hba.conf, anyadir:
          host  si2db  alumnodb  192.168.56.0/24  md5
-   - Reiniciar el servicio:
-         sudo systemctl restart postgresql
+   - Reiniciar postgres en MV1.
 
-3. Comprobar la conectividad desde MV2:
+3. Probar la conexion desde MV2:
+
        psql -h 192.168.56.11 -p 15432 -U alumnodb -d si2db
 
-4. Reiniciar gunicorn en MV2 para que recargue el env modificado:
-       sudo systemctl restart gunicorn
-
-Despues de estos cambios, la aplicacion en MV2 ya escribe correctamente
-sobre la BD de MV1.
+4. Reiniciar gunicorn en MV2 para que recargue el env modificado.

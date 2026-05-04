@@ -1,76 +1,59 @@
 PREGUNTA 1
 
-El error "numero tarjeta no encontrado en la sesion" se produce porque la
-sesion donde se guardo el numero de tarjeta no esta disponible para la
-instancia que recibe la peticion final (GET /visaApp/pago/).
+El fallo se debe a que sin sticky session el balanceador reparte cada
+peticion en una instancia distinta (round-robin, segun se ve en la
+captura: StickySession=(None) y Method=byrequests).
 
-Causas concretas:
+El flujo del pago tiene varios pasos: primero se mete la tarjeta y el
+numero se guarda en la sesion (request.session), y despues se accede a
+/pago/ que necesita leer ese numero. Como la sesion en P1-base esta
+configurada con LocMemCache (en settings.py,
+SESSION_ENGINE = "django.contrib.sessions.backends.cache"), cada
+instancia tiene su propio cache local y no se comparte con las otras.
 
-1. El balanceador esta configurado con StickySession=(None) (visible en la
-   captura del balancer-manager) y Method=byrequests. Esto significa que
-   cada peticion HTTP del cliente se distribuye en round-robin entre las 3
-   instancias del cluster, sin ninguna afinidad por cliente.
+Asi que la tarjeta se guarda en el cache de una instancia, pero la
+peticion siguiente cae en otra que no la tiene, y por eso aparece el
+mensaje "numero tarjeta no encontrado en la sesion".
 
-2. La aplicacion P1-base esta configurada con
-   SESSION_ENGINE = "django.contrib.sessions.backends.cache", que usa
-   LocMemCache. LocMemCache es un cache en memoria local de cada proceso
-   Django, por lo que NO se comparte entre las 3 instancias del cluster.
-
-3. El flujo del pago tiene varias peticiones consecutivas:
-   - GET  /visaApp/tarjeta/  (mostrar formulario tarjeta)
-   - POST /visaApp/tarjeta/  (guardar numeroTarjeta en request.session)
-   - GET  /visaApp/pago/     (leer numeroTarjeta de request.session)
-   Sin sticky session, estas peticiones caen en instancias distintas. La
-   instancia que guarda el numero de tarjeta en su LocMemCache no es la
-   misma que atiende la peticion siguiente, asi que esta no encuentra la
-   clave en sesion y muestra el error.
-
-Esto se confirma con la captura "despues": las 3 instancias tienen
-Elected=1 cada una, lo que demuestra que las peticiones del flujo fueron
-repartidas round-robin (una por instancia).
+En la captura de despues se ve que las 3 instancias acaban con
+Elected=1, lo que confirma que las peticiones del flujo se han
+repartido entre ellas.
 
 
 PREGUNTA 2
 
-Respuesta correcta: d) Ninguno. No se envia ninguna cookie desde el
-balanceador.
-
-Justificacion: la cookie ROUTEID solo se inyecta cuando el balanceador
-tiene activada la afinidad de sesion (sticky session) y existe la
-directiva
-    Header add Set-Cookie "ROUTEID=.%{BALANCER_WORKER_ROUTE}e; path=/"
-        env=BALANCER_ROUTE_CHANGED
-Como en la captura aparece StickySession=(None), Apache no esta marcando
-ninguna afinidad de cliente y por tanto no anyade la cookie ROUTEID a la
-respuesta. Las opciones a, b y c (.Instance01/02/03) solo serian validas
-con sticky session activo.
+La respuesta correcta es la d). Como el balanceador tiene
+StickySession=(None), Apache no esta marcando ninguna afinidad de
+cliente y por tanto no envia ninguna cookie ROUTEID. Las opciones a, b
+y c (.Instance01/02/03) solo tendrian sentido si el sticky estuviera
+activado y se inyectase la cookie con el sufijo de ruta.
 
 
 PREGUNTA 3
 
-1. Editar la configuracion del balanceador
-   (/etc/apache2/sites-available/000-default.conf) anyadiendo:
+Hay que activar la sticky session en el balanceador. En el fichero
+000-default.conf, dentro del Proxy del cluster, anyado
+ProxySet stickysession=ROUTEID y la directiva Header add Set-Cookie
+para que Apache inyecte la cookie con el sufijo de la instancia:
 
-       <Proxy "balancer://si2cluster">
-           BalancerMember http://192.168.1.101:18000 route=Instance01
-           BalancerMember http://192.168.1.101:28000 route=Instance02
-           BalancerMember http://192.168.1.101:38000 route=Instance03
-           ProxySet stickysession=ROUTEID
-       </Proxy>
+    <Proxy "balancer://si2cluster">
+        BalancerMember http://192.168.1.101:18000 route=Instance01
+        BalancerMember http://192.168.1.101:28000 route=Instance02
+        BalancerMember http://192.168.1.101:38000 route=Instance03
+        ProxySet stickysession=ROUTEID
+    </Proxy>
 
-       Header add Set-Cookie "ROUTEID=.%{BALANCER_WORKER_ROUTE}e; path=/" \
-           env=BALANCER_ROUTE_CHANGED
+    Header add Set-Cookie "ROUTEID=.%{BALANCER_WORKER_ROUTE}e; path=/" \
+        env=BALANCER_ROUTE_CHANGED
 
-2. Verificar y recargar Apache:
-       sudo apachectl configtest
-       sudo systemctl reload apache2
+Luego compruebo y recargo Apache:
 
-3. Borrar las cookies del navegador (para que no quede una ROUTEID
-   "fantasma" de pruebas anteriores).
+    sudo apachectl configtest
+    sudo systemctl reload apache2
 
-4. Repetir el flujo de pago. Ahora todas las peticiones del flujo iran a
-   la misma instancia (la que asigne la primera peticion), la sesion se
-   conservara y el pago se registrara correctamente. En balancer-manager
-   se vera que solo una instancia incrementa el contador Elected para
-   ese cliente, y en DevTools del navegador aparecera la cookie ROUTEID
-   con valor .Instance0X.
+Y borro las cookies del navegador para no arrastrar una ROUTEID vieja.
+
+Tras esto, todas las peticiones del flujo van a la misma instancia, la
+sesion se conserva y el pago se registra bien. En el balancer-manager
+solo una instancia incrementa Elected, y en el navegador aparece la
+cookie ROUTEID con el sufijo .Instance0X.
