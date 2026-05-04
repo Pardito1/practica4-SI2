@@ -1,0 +1,70 @@
+EJERCICIO 1 — [Sustituir por título corto del enunciado]
+=========================================================
+
+ENUNCIADO RESUMIDO
+------------------
+[En 2-3 líneas, qué pedía el ejercicio]
+
+
+PASOS REALIZADOS
+----------------
+1. Se ha copiado P1-base original a P1-base-ex.
+2. Se ha modificado el modelo Pago/Voto añadiendo el campo "[NOMBRE_CAMPO]" de tipo [TIPO].
+3. Se ha modificado el formulario PagoForm/VotoForm correspondiente.
+4. Se ha actualizado la plantilla template_pago.html / template_test_bd.html añadiendo el input.
+5. Se ha generado y aplicado la migración Django (`makemigrations` + `migrate`).
+6. Se han realizado pruebas registrando varios pagos/votos a través del formulario.
+
+NOTAS DE TRADUCCIÓN JSF → DJANGO (si aplica)
+--------------------------------------------
+- El enunciado describe el stack como JSF/JSP. Vosotros usáis Django.
+- Equivalencias aplicadas:
+  * <h:inputText name="X"/>  →  <input type="text" name="X" required>
+  * VotoBean (Java)          →  modelo Voto (Django)
+  * VotoDAO.registrarVoto    →  votoDB.registrar_voto (función)
+  * alter table ADD COLUMN   →  Django migration generada con makemigrations
+
+
+CÓDIGO MODIFICADO
+-----------------
+
+models.py (clase Pago/Voto):
+[pega aquí el snippet]
+
+forms.py (clase PagoForm/VotoForm):
+[pega aquí el snippet]
+
+template_pago.html (o el que toque):
+[pega aquí el snippet]
+
+migrations/000X_<algo>.py (autogenerado):
+[opcional: pega el contenido]
+
+
+COMANDOS EJECUTADOS
+-------------------
+$ cp -r P1-base P1-base-ex
+$ cd P1-base-ex
+$ python manage.py makemigrations visaApp
+$ python manage.py migrate
+
+[en el navegador o testbd: registrar 3-5 pagos/votos de prueba]
+
+
+RESULTADO SQL — SELECT * FROM <tabla>
+-------------------------------------
+[Pega la salida literal y completa de:
+   sudo -u postgres psql -d si2db -c 'SELECT * FROM pago;'
+ (o la tabla que aplique)]
+
+Ejemplo del formato:
+ id | idComercio | idTransaccion | importe |       marcaTiempo       | codigoRespuesta | concepto | tarjeta_id
+----+------------+---------------+---------+-------------------------+-----------------+----------+------------
+  1 | COM001     | TR0001        |   25.50 | 2026-05-05 09:15:23.123 | 000             | Comida   | 1111...
+  2 | COM002     | TR0002        |   12.30 | 2026-05-05 09:16:07.456 | 000             | Cine     | 2222...
+(N filas)
+
+
+CONCLUSIÓN
+----------
+[1-2 líneas: confirmación de que el campo se persiste correctamente y aparece en SELECT]
